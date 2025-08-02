@@ -1,7 +1,8 @@
 import { Tabs } from 'expo-router';
-import React from 'react';
+import React, { useState } from 'react';
 import { Platform } from 'react-native';
 
+import SplashScreenWrapper from '@/components/AnimatedSplashScreen'; // Animated Splash Screen
 import { HapticTab } from '@/components/HapticTab';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import TabBarBackground from '@/components/ui/TabBarBackground';
@@ -10,7 +11,14 @@ import { useColorScheme } from '@/hooks/useColorScheme';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const [splashDone, setSplashDone] = useState(false);
 
+  // If Splash not done, show SplashScreenWrapper first
+  if (!splashDone) {
+    return <SplashScreenWrapper onFinish={() => setSplashDone(true)} />;
+  }
+
+  // Once splash is done, render Tabs
   return (
     <Tabs
       screenOptions={{
