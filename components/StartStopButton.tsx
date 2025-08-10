@@ -1,53 +1,157 @@
-import { Button } from 'react-native';
-import { Audio } from 'expo-av';
-import { useState } from 'react';
-import socket from '@/utils/api';
+import React, { useState, useRef } from "react";
+import { View, Button, Alert, Image, Text } from "react-native";
+import { Audio } from "expo-av";
 
-interface StartStopButtonProps {
-  onSoundDetected: (sound: any) => void;
-}
+type StartStopButtonProps = {
+  onSoundDetected?: (gifUrl: string, label: string) => void;
+};
+
+const SERVER_URL = "http://192.168.0.114:8000/classify-sound";
 
 export default function StartStopButton({ onSoundDetected }: StartStopButtonProps) {
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-
+  const [isRecording, setIsRecording] = useState(false);
+  const [detectedLabel, setDetectedLabel] = useState<string | null>(null);
+  const [detectedGif, setDetectedGif] = useState<any>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const isLoopingRef = useRef(false);
+  const gifMap: Record<string, any> = {
+  music: require("../assets/gifs/music.gif"),
+  applause: require("../assets/gifs/applause.gif"),
+  dog_bark: require("../assets/gifs/dog_bark.gif"),
+  unknown: require("../assets/gifs/unknown.gif"),
+};
   const startRecording = async () => {
     try {
-      const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) return;
+      console.log("Requesting permissions...");
+      const permission = await Audio.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Permission to access microphone is required!");
+        return;
+      }
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true });
-      const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HighQuality);
-      await rec.startAsync();
-      setRecording(rec);
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
 
-      // Send audio periodically to backend (optional enhancement)
+      console.log("Starting recording...");
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+
+      recordingRef.current = recording;
+      console.log("Recording started...");
     } catch (err) {
-      console.error("Failed to start recording", err);
+      console.error("Failed to start recording:", err);
     }
   };
 
   const stopRecording = async () => {
+    console.log("Stopping recording...");
+    if (!recordingRef.current) return;
+
     try {
-      if (!recording) return;
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      console.log("Recording stopped, file saved at:", uri);
 
-      // send the recorded file to backend (REST or WebSocket)
-      const fileBlob = await fetch(uri!).then(res => res.blob());
-      socket.emit("audio", fileBlob);
-
-      recording.setOnRecordingStatusUpdate(null);
-      setRecording(null);
+      if (uri) {
+        await sendAudioToAPI(uri);
+      }
     } catch (err) {
-      console.error("Failed to stop recording", err);
+      console.error("Failed to stop recording:", err);
+    }
+  };
+
+  const sendAudioToAPI = async (uri: string) => {
+    try {
+      const formData = new FormData();
+      formData.append("file", {
+        uri,
+        name: "recording.m4a",
+        type: "audio/m4a",
+      } as any);
+
+      const response = await fetch(SERVER_URL, {
+        method: "POST",
+        body: formData,
+      });
+
+      const rawText = await response.text();
+
+      if (!response.ok) {
+        console.error("API error, status:", response.status);
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        console.error("Failed to parse JSON:", parseErr);
+        return;
+      }
+
+      if (data.label) {
+        setDetectedLabel(data.label);
+
+        // Map label to local gif or use unknown gif if not matched
+        const gif = gifMap[data.label] || gifMap["unknown"];
+        setDetectedGif(gif);
+      } else {
+        setDetectedLabel(null);
+        setDetectedGif(null);
+      }
+    } catch (err) {
+      console.error("Error sending audio:", err);
+    }
+  };
+
+  const loopRecording = async () => {
+    while (isLoopingRef.current) {
+      await startRecording();
+      await new Promise((resolve) => setTimeout(resolve, 3000)); // record 3 seconds
+      await stopRecording();
+    }
+  };
+
+  const handleStartStop = async () => {
+    if (isRecording) {
+      isLoopingRef.current = false;
+      setIsRecording(false);
+      console.log("Stopped continuous recording.");
+    } else {
+      isLoopingRef.current = true;
+      setIsRecording(true);
+      loopRecording();
+      console.log("Started continuous recording.");
     }
   };
 
   return (
-    <Button
-      title={recording ? "Stop Listening" : "Start Listening"}
-      onPress={recording ? stopRecording : startRecording}
-    />
+    <View style={{ margin: 20, alignItems: "center" }}>
+      <Button
+        title={isRecording ? "Stop" : "Start"}
+        onPress={handleStartStop}
+        color={isRecording ? "red" : "green"}
+      />
+
+      <View style={{ marginTop: 20, alignItems: "center" }}>
+        {detectedLabel ? (
+          <Text style={{ fontSize: 20, fontWeight: "bold" }}>
+            Detected Sound: {detectedLabel}
+          </Text>
+        ) : (
+          <Text>No sound detected yet</Text>
+        )}
+
+        {detectedGif && (
+          <Image
+            source={detectedGif}
+            style={{ width: 200, height: 200, resizeMode: "contain", marginTop: 10 }}
+          />
+        )}
+      </View>
+    </View>
   );
 }
