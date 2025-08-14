@@ -1,4 +1,6 @@
 import { io } from "socket.io-client";
+import { SOCKET_URL } from "@env"
 
-const socket = io("http://192.168.0.114:8000"); // e.g., 
+const socket = io(SOCKET_URL, { transports: ["websocket"] });
+
 export default socket;
